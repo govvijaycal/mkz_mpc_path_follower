@@ -5,8 +5,7 @@ using RobotOS
 @rosimport geometry_msgs.msg: Twist
 @rosimport dbw_mkz_msgs.msg: SteeringReport
 @rosimport nav_msgs.msg: Path
-@rosimport mkz_mpc_path_follower.msg: MPC_cmd
-@rosimport std_msgs.msg: Float64
+@rosimport mkz_mpc_path_follower.msg: MPC_cmd, acc_stamped
 rostypegen()
 using geometry_msgs.msg
 using dbw_mkz_msgs.msg
@@ -21,7 +20,7 @@ unshift!(PyVector(pyimport("sys")["path"]), path_utils_loc) # append the current
 @pyimport nav_msgs_path_frenet as nmp
 
 # Access MPC Controller.
-include("mpc_utils/kinematic_mpc_module_frenet.jl")
+push!(LOAD_PATH, "/home/govvijay/catkin_ws/src/mkz_mpc_path_follower/scripts/mpc_utils")
 import KinMPCPathFollowerFrenet
 const kmpc = KinMPCPathFollowerFrenet
 
@@ -48,10 +47,10 @@ function steer_callback(msg::SteeringReport)
 	end
 end
 
-function acc_filt_callback(msg::Float64Msg)
+function acc_filt_callback(msg::acc_stamped)
 	if ref_lock == false
 		global curr_acc_filt
-		curr_acc_filt = Float64(msg.data)
+		curr_acc_filt = Float64(msg.accel_value)
 	end
 end
 
@@ -169,7 +168,7 @@ function start_mpc_node()
     pub = Publisher("mpc_cmd",MPC_cmd, queue_size=2)
     sub_steer = Subscriber("steering_report", SteeringReport, steer_callback, queue_size=2)    
     sub_path = Subscriber("target_path", Path, path_callback, queue_size=2)
-	sub_acc  = Subscriber("filtered_accel", Float64Msg, acc_filt_callback, queue_size=2)    
+	sub_acc  = Subscriber("filtered_accel", acc_stamped, acc_filt_callback, queue_size=2)    
 
     pub_loop(pub)    
 end
