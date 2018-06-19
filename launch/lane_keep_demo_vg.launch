@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+
+<launch>
+  
+  <!-- Gazebo launch -->
+  <include file="$(find dbw_mkz_gazebo)/launch/dbw_mkz_gazebo.launch" >
+    <arg name="use_camera_control" value="true" />
+    <arg name="world_name" value="$(find dbw_mkz_gazebo)/worlds/test_track.world" />
+    <arg name="sim_param_file" value="$(find dbw_mkz_gazebo)/yaml/single_vehicle_test_track.yaml" />
+  </include>
+  
+  <!-- Lane detection launch -->
+  <include file="$(find dbw_mkz_vision_sim)/launch/lane_detection.launch" />
+
+  <!-- Path Following Controller can be Selected here. -->
+  <node ns="vehicle" pkg="mkz_mpc_path_follower" type="mpc_cmd_pub.jl" name="mpc_node" output="log"/>
+  <!--node ns="vehicle" pkg="mkz_mpc_path_follower" type="mpc_cmd_pub_frenet.jl" name="mpc_node" output="log"/-->
+
+  <!-- My low level controller -->
+  <arg name="ackermann_wheelbase" default="2.8498"/>
+  <arg name="ackermann_track"     default="1.5824"/>
+  <arg name="steering_ratio"      default="14.8"/>
+  <arg name="enable_pedals_control"   default="True"/>
+  <arg name="enable_steering_control" default="True"/>
+  <arg name="decel_max" default="3.0"/>
+  <arg name="accel_max" default="3.0"/>
+	<node ns="vehicle" pkg="mkz_mpc_path_follower" type="low_level_controller" name="low_level_controller" output="log">
+	  <param name="ackermann_wheelbase" value="$(arg ackermann_wheelbase)" />
+	  <param name="ackermann_track" value="$(arg ackermann_track)" />
+	  <param name="steering_ratio" value="$(arg steering_ratio)" />
+	  <param name="pub_pedals" value="$(arg enable_pedals_control)" />
+	  <param name="pub_steering" value="$(arg enable_steering_control)" />
+	  <param name="decel_max" value="$(arg decel_max)" />
+	  <param name="accel_max" value="$(arg accel_max)" />
+	</node>
+
+  <!-- DBW launch without using Twist Controller. -->
+  <include file="$(find dbw_mkz_can)/launch/dbw.launch" >
+    <arg name="live" value="false" />
+    <arg name="load_urdf" value="false" />
+    <arg name="can_ns" value="can_bus_dbw" />
+    <arg name="twist_controller" value="false" />
+  </include>
+</launch>

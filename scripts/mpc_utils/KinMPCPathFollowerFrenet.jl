@@ -42,6 +42,9 @@ module KinMPCPathFollowerFrenet
 
 	a_max = 1.0				# acceleration and deceleration bound, m/s^2
 	a_dmax = 1.5			# jerk bound, m/s^3
+
+	v_min = 0.0				# vel bounds (m/s)
+	v_max = 20.0			
 	
     # Cost function gains.
     C_ey = 10.0				# lateral deviation
@@ -60,7 +63,7 @@ module KinMPCPathFollowerFrenet
 	@variable( mdl, s[1:(N+1)], start=0.0)
 	@variable( mdl, ey[1:(N+1)], start=0.0)
 	@variable( mdl, epsi[1:(N+1)], start=0.0)
-	@variable( mdl, v[1:(N+1)], start=0.0)
+	@variable( mdl, v_min<= v[1:(N+1)] <= v_max, start=0.0)
 
 
 	# Input Constraints
