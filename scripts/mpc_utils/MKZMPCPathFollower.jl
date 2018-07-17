@@ -15,103 +15,120 @@
  based on an open source project by Bruce Wootton
 =# 
 
-module KinMPCPathFollower
+# This is an implementation of MPC using the kinematic bicycle model found here:
+# http://www.me.berkeley.edu/~frborrel/pdfpub/IV_KinematicMPC_jason.pdf
 
+__precompile__()
+
+module MKZMPCPathFollower
     using JuMP
     using Ipopt
 
-    #### (1) Set up model and model parameters ####
-    mdl = Model(solver = IpoptSolver(print_level=0, max_cpu_time = 0.1))
+    #### (1) Initialize model and model parameters and MPC gains ####
+	dt_control = 0.10		# control period, ts (s)
+    mdl = Model(solver = IpoptSolver(print_level=0, max_cpu_time = dt_control))
 
-	L_a     = 1.108 		# meters
-	L_b     = 1.742 		# meters
-	dt      = 0.20			# seconds                     
+	L_a     = 1.108 		# dist from CoG to front axle (m)
+	L_b     = 1.742 		# dist from CoG to rear axle (m)
+	dt      = 0.20			# model discretization time, td (s)
 	N       = 8				# horizon
    
-	x_ref   = 15.0*collect(0.0:dt:N*dt)			# x(0.0 s), ..., x(N*dt s)
-	y_ref   = zeros(N+1)			# y(0.0 s), ..., y(N*dt s)
-    psi_ref = zeros(N+1)			# psi(0.0 s), ..., psi(N*dt s)
+	v_ref = 15.0							# target velocity for path follower
+	x_ref   = v_ref*collect(0.0:dt:N*dt)	# target x(0.0 s), ..., x(N*dt s)
+	y_ref   = zeros(N+1)					# target y(0.0 s), ..., y(N*dt s)
+    psi_ref = zeros(N+1)					# target psi(0.0 s), ..., psi(N*dt s)
 
-    steer_max = 0.5 		# radians (steering angle bound, i.e. on d_f)
-    steer_dmax = 0.5		# radians/sec (steering angle rate bound, i.e. on d_f derivative)
+    steer_max = 0.5 		# tire angle (d_f) bound, rad
+    steer_dmax = 0.5		# tire angle (d_f) rate bound, rad/s
 
-    a_max = 3.0				# m/s*2 (acceleration bound)
+	a_max = 1.0				# acceleration and deceleration bound, m/s^2
+	a_dmax = 1.5			# jerk bound, m/s^3
 
-    # Cost factors:
-    C_x = 0.8
-    C_y = 1.0
-    C_psi = 0.1
-    C_v   = 0.1
-    C_acc = 0.1
-    C_df  = 1.0
-    C_dfi = 1.0
+	v_min = 0.0				# vel bounds (m/s)
+	v_max = 20.0			
+	
+    # Cost function gains.
+    C_x = 9.0				# longitudinal deviation
+    C_y = 9.0				# lateral deviation
+    C_psi = 10.0			# heading deviation
+    C_v   = 0.0			# target velocity deviation
+
+	C_dacc	 = 0.1			# derivative of acceleration input
+	C_ddf	 = 3e4		# derivative of tire angle input
+	C_acc	 = 4.0			# acceleration input
+	C_df	 = 150			# tire angle input
 
 	#### (2) Define State/Input Variables and Constraints ####
-	# states: position (x,y), velocity (v), yaw angle (psi)
-	# inputs: steering_angle and acceleration.
+	# states: position (x,y), velocity (v), heading (psi)
+	# inputs: tire angle (d_f) and acceleration (acc).
 	println("Creating kinematic bicycle model ....")
 	@variable( mdl, x[1:(N+1)], start=0.0)
 	@variable( mdl, y[1:(N+1)], start=0.0)
-	@variable( mdl, v[1:(N+1)], start=0.0)
-	@variable( mdl, psi[1:(N+1)], start=0.0) # TODO: may need to constrain to +/- pi...
+	@variable( mdl, v_min<= v[1:(N+1)] <= v_max, start=0.0)
+	@variable( mdl, psi[1:(N+1)], start=0.0)
 
+	# Input Constraints
 	@variable( mdl, -a_max <= acc[1:N] <= a_max, start=0.0)
 	@variable( mdl, -steer_max <= d_f[1:N] <= steer_max, start=0.0)
 
-    for i in 1:(N-1)
+	# Input Steering Rate Constraints
+	@NLparameter(mdl, d_f_current == 0.0) # Current tire angle is a model parameter.
+	@NLconstraint(mdl, -steer_dmax*dt_control <= d_f[1]  - d_f_current <= steer_dmax*dt_control)
+    for i in 2:(N-1)
         @constraint(mdl, -steer_dmax*dt <= d_f[i+1] - d_f[i] <= steer_dmax*dt)
     end
 
-	@NLparameter(mdl, d_f_current == 0.0)
-	#@NLconstraint(mdl, -steer_dmax*dt <= d_f[1]  - d_f_current <= -steer_dmax*dt) # 0.1 s * 0.5 rad/s limit.
+	# Input Acceleration Rate Constraints
+	@NLparameter(mdl, acc_current == 0.0) # Current acceleration is a model parameter.
+	@NLconstraint(mdl, -a_dmax*dt_control <= acc[1]  - acc_current <= a_dmax*dt_control)
+    for i in 2:(N-1)
+        @constraint(mdl, -a_dmax*dt <= acc[i+1] - acc[i] <= a_dmax*dt)
+    end	
 
 	#### (3) Define Objective ####
 
-	@NLparameter(mdl, x_r[i=1:(N+1)] == x_ref[i]) # Reference trajectory can be updated.
+	# Reference trajectory is encoded as model parameters.
+	@NLparameter(mdl, x_r[i=1:(N+1)] == x_ref[i]) 
 	@NLparameter(mdl, y_r[i=1:(N+1)] == y_ref[i])
 	@NLparameter(mdl, psi_r[i=1:(N+1)] == psi_ref[i])
-	@NLparameter(mdl, v_target == 15.0)
+	@NLparameter(mdl, v_target == v_ref)
 
-
+	# Cost function.
     @NLobjective(mdl, Min, sum{ C_x*(x[i] - x_r[i])^2 + C_y*(y[i] - y_r[i])^2 + C_psi*(psi[i] - psi_r[i])^2 , i=2:(N+1)} + 
-                           C_v *sum{ (v[i] - v_target)^2, i = 1:N} + 
-                           C_acc*sum{acc[i]^2, i=1:N} +
-                           C_df*sum{(d_f[i])^2, i=1:(N)}                           
-                )
-	#+C_dfi*(d_f[1] - d_f_current)^2
-    #@NLobjective(mdl, Min, (x[N+1] - x_r[N+1])^2 + (y[N+1] - y_r[N+1])^2 ) # terminal cost only
+                           C_v *sum{ (v[i] - v_target)^2, i = 2:N} + 
+                           C_acc*sum{(acc[i])^2, i=1:N} +
+                           C_df*sum{(d_f[i])^2, i=1:N} +
+						   C_dacc*sum{(acc[i+1] - acc[i])^2, i=1:(N-1)} +
+                           C_ddf*sum{(d_f[i+1] - d_f[i])^2, i=1:(N-1)}
+				)
 
 	#### (4) Define System Dynamics Constraints ####
 	# Reference: R.Rajamani, Vehicle Dynamics and Control, set. Mechanical Engineering Series,
 	#               Spring, 2011, page 26
 
-    # Initial condition and velocity can be updated.
+    # Initial condition is a model parameter.
 	@NLparameter(mdl, x0     == 0.0); @NLconstraint(mdl, x[1]     == x0);    
 	@NLparameter(mdl, y0     == 0.0); @NLconstraint(mdl, y[1]     == y0);    
 	@NLparameter(mdl, psi0   == 0.0); @NLconstraint(mdl, psi[1]   == psi0);
     @NLparameter(mdl, v0     == 0.0); @NLconstraint(mdl, v[1]     == v0);
 
-	@NLexpression(mdl, bta[i = 1:N], atan( L_a / (L_a + L_b) * tan(d_f[i]) ) )
+	@NLexpression(mdl, bta[i = 1:N], atan( L_b / (L_a + L_b) * tan(d_f[i]) ) )
 
 	for i in 1:N
         # equations of motion wrt CoG
 		@NLconstraint(mdl, x[i+1]   == x[i]   + dt*( v[i]*cos(psi[i] + bta[i]) ) )
 		@NLconstraint(mdl, y[i+1]   == y[i]   + dt*( v[i]*sin(psi[i] + bta[i]) ) )
 		@NLconstraint(mdl, psi[i+1] == psi[i] + dt*( v[i]/L_b*sin(bta[i]) ) )
-
-        # equations of motion wrt base link
-		#@NLconstraint(mdl, x[i+1]   == x[i]   + dt*( v[i]*cos(psi[i]+ bta[i])  + v[i]*sin(psi[i])*sin(bta[i]) ) )
-		#@NLconstraint(mdl, y[i+1]   == y[i]   + dt*( v[i]*sin(psi[i] + bta[i]) - v[i]*cos(psi[i])*sin(bta[i]) ) )
-		#@NLconstraint(mdl, psi[i+1] == psi[i] + dt*( v[i]/L_b * sin(bta[i]) ) )
         @NLconstraint(mdl, v[i+1]   == v[i]   + dt*( acc[i] ) )
-
 	end
 
     #### (5) Initialize Solver ####
-	println("initial solve ...")
+	println("MPC: Initial solve ...")
 	status = solve(mdl)
-	println("finished initial solve: ", status)
+	println("MPC: Finished initial solve: ", status)
 
+	#################################
+	##### State Update Function #####
     function update_init_cond(x::Float64, y::Float64, psi::Float64, vel::Float64)
         # update mpc initial condition 
         setvalue(x0,    x)
@@ -120,24 +137,26 @@ module KinMPCPathFollower
         setvalue(v0,    vel)
     end
 
+	#####################################
+	##### Reference Update Function #####
     function update_reference(x_ref::Array{Float64,1}, y_ref::Array{Float64,1}, psi_ref::Array{Float64,1})
     	setvalue(x_r[i=1:(N+1)], x_ref) # Reference trajectory can be updated.
     	setvalue(y_r[i=1:(N+1)], y_ref) # Reference trajectory can be updated.
     	setvalue(psi_r[i=1:(N+1)], psi_ref) # Reference trajectory can be updated.
     end
 
-	function update_steer_wheel_angle(c_swa::Float64)
+	#########################################
+	##### Input Update Function #####
+	function update_current_input(c_swa::Float64, c_acc::Float64)
 		setvalue(d_f_current, c_swa)
-        #println(getvalue(d_f_current), " ", c_swa)
+		setvalue(acc_current, c_acc)
 	end
 
-    function solve_model_with_ref(x_ref::Array{Float64,1}, y_ref::Array{Float64,1}, psi_ref::Array{Float64,1})
-        update_reference(x_ref, y_ref, psi_ref)
-        return solve_model()
-    end
-
+	#################################
+	##### Model Solve Function #####
     function solve_model()
-        # Solve the model.
+        # Solve the model, assuming relevant update functions have been called by the user.
+
         status = solve(mdl)
 
         # get optimal solutions
@@ -168,10 +187,17 @@ module KinMPCPathFollower
         end
         =#
 
+
         return acc_opt[1], d_f_opt[1], status
     end
 
+
+	#################################
+	##### Diagnostics Function ######
 	function get_solver_results()
+		# This function gets all relevant solver variables and returns it to the client.
+		# Handy for debugging or logging full results.
+
 		# State Variables and Reference
 		x_mpc   = getvalue(x[1:(N+1)])
 		y_mpc   = getvalue(y[1:(N+1)])

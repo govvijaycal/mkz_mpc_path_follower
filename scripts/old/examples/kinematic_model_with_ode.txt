@@ -1,3 +1,0 @@
-Look at https://github.com/JuliaMPC/VehicleModels.jl/blob/master/src/KinematicBicycle/KinematicBicycle.jl developed by Huckleberry Febbo at UMich.
-
-He extends the kinematic model used by BARC by adding a ODE solver.  Can consider this if the model fidelity is bad.

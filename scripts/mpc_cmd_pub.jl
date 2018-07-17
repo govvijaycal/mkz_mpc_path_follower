@@ -22,11 +22,8 @@ unshift!(PyVector(pyimport("sys")["path"]), path_utils_loc) # append the current
 
 # Access MPC Controller.
 push!(LOAD_PATH, "/home/govvijay/catkin_ws/src/mkz_mpc_path_follower/scripts/mpc_utils")
-import KinMPCPathFollower
-const kmpc = KinMPCPathFollower
-
-# For Data Logging
-using JLD
+import MKZMPCPathFollower
+const kmpc = MKZMPCPathFollower
 
 const t_ref = collect(0:kmpc.dt:kmpc.N*kmpc.dt)
 x_ref = zeros(length(t_ref))
@@ -123,52 +120,43 @@ end
 
 function pub_loop(pub_obj)
     loop_rate = Rate(10.0)
-    count = 0
+    while ! is_shutdown()
+	    if ! received_reference
+	        rossleep(loop_rate)
+	        continue
+	    end
 
-	filename = @sprintf("mpc_xy_%s.jld", Dates.DateTime(now()) )
-	jldopen(filename, "w") do file
+	    global ref_lock
+	    ref_lock = true
 
-	    while ! is_shutdown()
-    	    if ! received_reference
-    	        rossleep(loop_rate)
-    	        continue
-    	    end
-	
-    	    global ref_lock
-    	    ref_lock = true
-	
-			global curr_speed, curr_wheel_angle, curr_acc_filt
-			global x_ref, y_ref, psi_ref
+		global curr_speed, curr_wheel_angle, curr_acc_filt
+		global x_ref, y_ref, psi_ref
 
-			# Update Model
-			kmpc.update_init_cond(0.0, 0.0, 0.0, curr_speed)
-			kmpc.update_reference(x_ref, y_ref, psi_ref)
-	
-    	    ref_lock = false
-	
-    	    a_opt, df_opt, is_opt = kmpc.solve_model()
+		# Update Model
+		kmpc.update_init_cond(0.0, 0.0, 0.0, curr_speed)
+		kmpc.update_reference(x_ref, y_ref, psi_ref)
 
-			rostm = get_rostime()
-			tm_secs = rostm.secs + 1e-9 * rostm.nsecs
-	
-    	    log_str = @sprintf("Solve Status: %s, Acc: %.3f, SA: %.3f", is_opt, a_opt, df_opt)
-    	    loginfo(log_str)
-	
-    	    u_msg = MPC_cmd()
-    	    u_msg.accel_cmd = a_opt
-    	    u_msg.steer_angle_cmd = df_opt
-    	     
-			#if is_opt == :Optimal
-		        publish(pub_obj, u_msg)
-			#end
+	    ref_lock = false
 
-			kmpc.update_current_input(df_opt, a_opt)
-			res = kmpc.get_solver_results()
-			save_name = @sprintf("iter_%d", count)
-			write(file, save_name, (tm_secs, res))
-			count = count + 1
-    	    rossleep(loop_rate)
-    	end
+	    a_opt, df_opt, is_opt = kmpc.solve_model()
+
+		rostm = get_rostime()
+		tm_secs = rostm.secs + 1e-9 * rostm.nsecs
+
+	    log_str = @sprintf("Solve Status: %s, Acc: %.3f, SA: %.3f", is_opt, a_opt, df_opt)
+	    loginfo(log_str)
+
+	    u_msg = MPC_cmd()
+	    u_msg.accel_cmd = a_opt
+	    u_msg.steer_angle_cmd = df_opt
+	     
+		#if is_opt == :Optimal
+	        publish(pub_obj, u_msg)
+		#end
+
+		kmpc.update_current_input(df_opt, a_opt)
+		res = kmpc.get_solver_results()
+	    rossleep(loop_rate)
 	end
 end	
 

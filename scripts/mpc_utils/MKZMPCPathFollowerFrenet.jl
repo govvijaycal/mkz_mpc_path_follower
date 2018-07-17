@@ -1,7 +1,7 @@
 #!/usr/bin/env julia
 
 #=
- This is a modified version of controller_MPC.jl from the barc project ROS codebase.
+ This is a modified version of controller_MPC_traj.jl from the barc project ROS codebase.
 
  Licensing Information: You are free to use or extend these projects for 
  education or reserach purposes provided that (1) you retain this notice
@@ -20,7 +20,7 @@
 
 __precompile__()
 
-module KinMPCPathFollower
+module MKZMPCPathFollowerFrenet
     using JuMP
     using Ipopt
 
@@ -33,10 +33,10 @@ module KinMPCPathFollower
 	dt      = 0.20			# model discretization time, td (s)
 	N       = 8				# horizon
    
-	v_ref = 15.0							# target velocity for path follower
-	x_ref   = v_ref*collect(0.0:dt:N*dt)	# target x(0.0 s), ..., x(N*dt s)
-	y_ref   = zeros(N+1)					# target y(0.0 s), ..., y(N*dt s)
-    psi_ref = zeros(N+1)					# target psi(0.0 s), ..., psi(N*dt s)
+    path_ref = Dict() # placeholder to keep the reference set of waypoints for logging.
+	v_ref = 15.0						# target velocity for path follower
+	k_coeff_ref = [0.0, 0.0, 0.0, 0.0]	# K(s) = a0 + a1 * s + a2 * s^2 + a3 * s^3
+										# [a3,a2,a1,a0] -> highest degree first!
 
     steer_max = 0.5 		# tire angle (d_f) bound, rad
     steer_dmax = 0.5		# tire angle (d_f) rate bound, rad/s
@@ -48,10 +48,9 @@ module KinMPCPathFollower
 	v_max = 20.0			
 	
     # Cost function gains.
-    C_x = 9.0				# longitudinal deviation
-    C_y = 9.0				# lateral deviation
-    C_psi = 10.0			# heading deviation
-    C_v   = 0.0			# target velocity deviation
+    C_ey = 10.0				# lateral deviation
+    C_epsi = 5.0			# heading deviation
+    C_ev   = 0.5			# target velocity deviation
 
 	C_dacc	 = 0.1			# derivative of acceleration input
 	C_ddf	 = 3e4		# derivative of tire angle input
@@ -62,10 +61,11 @@ module KinMPCPathFollower
 	# states: position (x,y), velocity (v), heading (psi)
 	# inputs: tire angle (d_f) and acceleration (acc).
 	println("Creating kinematic bicycle model ....")
-	@variable( mdl, x[1:(N+1)], start=0.0)
-	@variable( mdl, y[1:(N+1)], start=0.0)
+	@variable( mdl, s[1:(N+1)], start=0.0)
+	@variable( mdl, ey[1:(N+1)], start=0.0)
+	@variable( mdl, epsi[1:(N+1)], start=0.0)
 	@variable( mdl, v_min<= v[1:(N+1)] <= v_max, start=0.0)
-	@variable( mdl, psi[1:(N+1)], start=0.0)
+
 
 	# Input Constraints
 	@variable( mdl, -a_max <= acc[1:N] <= a_max, start=0.0)
@@ -88,18 +88,16 @@ module KinMPCPathFollower
 	#### (3) Define Objective ####
 
 	# Reference trajectory is encoded as model parameters.
-	@NLparameter(mdl, x_r[i=1:(N+1)] == x_ref[i]) 
-	@NLparameter(mdl, y_r[i=1:(N+1)] == y_ref[i])
-	@NLparameter(mdl, psi_r[i=1:(N+1)] == psi_ref[i])
+	@NLparameter(mdl, k_poly[i=1:length(k_coeff_ref)] == k_coeff_ref[i]) 
 	@NLparameter(mdl, v_target == v_ref)
 
 	# Cost function.
-    @NLobjective(mdl, Min, sum{ C_x*(x[i] - x_r[i])^2 + C_y*(y[i] - y_r[i])^2 + C_psi*(psi[i] - psi_r[i])^2 , i=2:(N+1)} + 
-                           C_v *sum{ (v[i] - v_target)^2, i = 2:N} + 
-                           C_acc*sum{(acc[i])^2, i=1:N} +
-                           C_df*sum{(d_f[i])^2, i=1:N} +
-						   C_dacc*sum{(acc[i+1] - acc[i])^2, i=1:(N-1)} +
-                           C_ddf*sum{(d_f[i+1] - d_f[i])^2, i=1:(N-1)}
+    @NLobjective(mdl, Min, sum{ C_ey*(ey[i])^2 + C_epsi*(epsi[i])^2 , i=2:(N+1)} + 
+                                C_ev*sum{ (v[i] - v_target)^2, i = 2:N} + 
+                                C_acc*sum{(acc[i])^2, i=1:N} +
+                                C_df*sum{(d_f[i])^2, i=1:N} +
+				                C_dacc*sum{(acc[i+1] - acc[i])^2, i=1:(N-1)} +
+                                C_ddf*sum{(d_f[i+1] - d_f[i])^2, i=1:(N-1)}
 				)
 
 	#### (4) Define System Dynamics Constraints ####
@@ -107,42 +105,45 @@ module KinMPCPathFollower
 	#               Spring, 2011, page 26
 
     # Initial condition is a model parameter.
-	@NLparameter(mdl, x0     == 0.0); @NLconstraint(mdl, x[1]     == x0);    
-	@NLparameter(mdl, y0     == 0.0); @NLconstraint(mdl, y[1]     == y0);    
-	@NLparameter(mdl, psi0   == 0.0); @NLconstraint(mdl, psi[1]   == psi0);
-    @NLparameter(mdl, v0     == 0.0); @NLconstraint(mdl, v[1]     == v0);
+	@NLparameter(mdl, s0    == 0.0);  @NLconstraint(mdl, s[1]   == s0);    
+	@NLparameter(mdl, ey0   == 0.0);  @NLconstraint(mdl, ey[1]   == ey0);    
+	@NLparameter(mdl, epsi0 == 0.0);  @NLconstraint(mdl, epsi[1] == epsi0);
+    @NLparameter(mdl, v0    == 0.0);  @NLconstraint(mdl, v[1]   == v0);
 
-	@NLexpression(mdl, bta[i = 1:N], atan( L_b / (L_a + L_b) * tan(d_f[i]) ) )
+	@NLexpression(mdl, K[i = 1:N],    k_poly[1]*s[i]^3 + k_poly[2]*s[i]^2 + k_poly[3]*s[i] + k_poly[4]) # TODO: CHECK ORDER MAKES SENSE.
+	@NLexpression(mdl, bta[i = 1:N],  atan( L_b / (L_a + L_b) * tan( d_f[i]) ) )
+	@NLexpression(mdl, dsdt[i = 1:N], v[i]*cos(epsi[i] + bta[i]) / (1-ey[i]*K[i]) )
 
 	for i in 1:N
-        # equations of motion wrt CoG
-		@NLconstraint(mdl, x[i+1]   == x[i]   + dt*( v[i]*cos(psi[i] + bta[i]) ) )
-		@NLconstraint(mdl, y[i+1]   == y[i]   + dt*( v[i]*sin(psi[i] + bta[i]) ) )
-		@NLconstraint(mdl, psi[i+1] == psi[i] + dt*( v[i]/L_b*sin(bta[i]) ) )
-        @NLconstraint(mdl, v[i+1]   == v[i]   + dt*( acc[i] ) )
+		# equations of motion wrt CoG
+    	@NLconstraint(mdl, s[i+1]     == s[i]       + dt*( dsdt[i] ))
+    	@NLconstraint(mdl, ey[i+1]    == ey[i]      + dt*( v[i]*sin(epsi[i]+bta[i]) ))
+    	@NLconstraint(mdl, epsi[i+1]  == epsi[i]    + dt*( v[i]/L_b*sin(bta[i]) - dsdt[i]*K[i] ))
+    	@NLconstraint(mdl, v[i+1]     == v[i]       + dt*( acc[i] ))
 	end
 
     #### (5) Initialize Solver ####
 	println("MPC: Initial solve ...")
 	status = solve(mdl)
-	println("MPC: Finished initial solve: ", status)
+	println("MPC: Finished initial solve: ", status)	
 
 	#################################
 	##### State Update Function #####
-    function update_init_cond(x::Float64, y::Float64, psi::Float64, vel::Float64)
+    function update_init_cond(s::Float64, ey::Float64, epsi::Float64, vel::Float64)
         # update mpc initial condition 
-        setvalue(x0,    x)
-        setvalue(y0,    y)
-        setvalue(psi0,  psi)
+        setvalue(s0,    s)
+        setvalue(ey0,   ey)
+        setvalue(epsi0, epsi)
         setvalue(v0,    vel)
     end
 
 	#####################################
 	##### Reference Update Function #####
-    function update_reference(x_ref::Array{Float64,1}, y_ref::Array{Float64,1}, psi_ref::Array{Float64,1})
-    	setvalue(x_r[i=1:(N+1)], x_ref) # Reference trajectory can be updated.
-    	setvalue(y_r[i=1:(N+1)], y_ref) # Reference trajectory can be updated.
-    	setvalue(psi_r[i=1:(N+1)], psi_ref) # Reference trajectory can be updated.
+    function update_reference(path::Dict, k_coeffs::Array{Float64,1}, v_des::Float64)
+    	global path_ref
+    	path_ref = path
+    	setvalue(k_poly[i=1:4], k_coeffs) # Reference trajectory can be updated.
+    	setvalue(v_target, v_des)
     end
 
 	#########################################
@@ -187,10 +188,8 @@ module KinMPCPathFollower
         end
         =#
 
-
         return acc_opt[1], d_f_opt[1], status
     end
-
 
 	#################################
 	##### Diagnostics Function ######
@@ -199,20 +198,18 @@ module KinMPCPathFollower
 		# Handy for debugging or logging full results.
 
 		# State Variables and Reference
-		x_mpc   = getvalue(x[1:(N+1)])
-		y_mpc   = getvalue(y[1:(N+1)])
+		s_mpc   = getvalue(s[1:(N+1)])
+		ey_mpc   = getvalue(ey[1:(N+1)])
 		v_mpc   = getvalue(v[1:(N+1)])
-		psi_mpc = getvalue(psi[1:(N+1)])
-
-		x_ref   = getvalue(x_r[1:(N+1)])
-		y_ref   = getvalue(y_r[1:(N+1)])
-		psi_ref = getvalue(psi_r[1:(N+1)])
+		epsi_mpc = getvalue(epsi[1:(N+1)])
+		K = getvalue(k_poly[1:4])
 
 		# Optimal Solution
         d_f_opt = getvalue(d_f[1:N])
         acc_opt = getvalue(acc[1:N])
 
-		return x_mpc, y_mpc, v_mpc, psi_mpc, x_ref, y_ref, psi_ref, d_f_opt, acc_opt	
+        # path_ref set in update_reference function.
+		return s_mpc, ey_mpc, v_mpc, epsi_mpc, K, path_ref, d_f_opt, acc_opt	
 	end
 
 end
