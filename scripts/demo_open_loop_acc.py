@@ -47,11 +47,11 @@ def pub_acc(mode='step'):
 def step_response(dt_secs):
 	if dt_secs < 1.0:		# [0-1 s]
 		a_des = 0.0
-	elif dt_secs < 6.0:		# [1-6 s]
+	elif dt_secs < 4.0:		# [1-6 s]
 		a_des = 1.0
-	elif dt_secs < 7.0:		# [6-7 s]
+	elif dt_secs < 5.0:		# [6-7 s]
 		a_des = 0.0
-	elif dt_secs < 12.0:	# [7-12 s]
+	elif dt_secs < 8.0:	# [7-12 s]
 		a_des = -1.0
 	else:					# [12+ s]
 		a_des = 0.0				

@@ -46,6 +46,8 @@
   <arg name="enable_steering_control" default="True"/>
   <arg name="decel_max" default="3.0"/>
   <arg name="accel_max" default="3.0"/>
+  <arg name="kp" default="0.4"/>
+  <arg name="ki" default="0.1"/>
   
   <group ns="$(arg vehicle_ns)" >
 
@@ -80,6 +82,8 @@
       <param name="pub_steering" value="$(arg enable_steering_control)" />
       <param name="decel_max" value="$(arg decel_max)" />
       <param name="accel_max" value="$(arg accel_max)" />
+      <param name="ki" value="$(arg ki)" />
+      <param name="kp" value="$(arg kp)" />
 	</node>
 
     <include if="$(arg load_urdf)" file="$(find dbw_mkz_description)/launch/mkz.launch" />

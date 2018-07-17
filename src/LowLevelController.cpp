@@ -46,7 +46,13 @@ LowLevelControllerNode::LowLevelControllerNode(ros::NodeHandle &n, ros::NodeHand
   lpf_fuel_.setParams(60.0, 0.1); //tau, ts
   lpf_accel_.setParams(0.5, 0.02);
 
-  accel_pid_.setGains(0.8, 0.4, 0.0); //kp,ki,kd
+	kp_ = 0.8;
+	ki_ = 0.4;
+  pn.getParam("kp", kp_);
+	pn.getParam("ki", ki_);
+
+
+  accel_pid_.setGains(kp_, ki_, 0.0); //kp,ki,kd
   accel_pid_.setRange(0.0, 1.0);      //min/max throttle %
 
   // Control rate parameter

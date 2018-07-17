@@ -104,6 +104,7 @@ private:
   double acker_track_;
   double steering_ratio_;
   double accel_max_, decel_max_;
+  double kp_, ki_;
 
   static const double GAS_DENSITY = 2.858; // kg/gal
   static double mphToMps(double mph) { return mph * 0.44704; }

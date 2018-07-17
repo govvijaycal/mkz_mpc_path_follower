@@ -76,6 +76,6 @@ def ramp_response(dt_secs):
 
 if __name__=="__main__":
 	try:
-		pub_steer(mode='ramp')
+		pub_steer(mode='step')
 	except rospy.ROSInterruptException:
 		pass # to handle node shutdown cleanly
