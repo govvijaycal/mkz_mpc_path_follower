@@ -6,6 +6,7 @@ using RobotOS
 @rosimport dbw_mkz_msgs.msg: SteeringReport
 @rosimport nav_msgs.msg: Path
 @rosimport mkz_mpc_path_follower.msg: MPC_cmd, acc_stamped
+@rosimport std_msgs.msg: Float64
 rostypegen()
 using geometry_msgs.msg
 using dbw_mkz_msgs.msg
@@ -15,18 +16,19 @@ using std_msgs.msg
 
 # Access Python modules for path processing.  Ugly way of doing it, can seek to clean this up in the future.
 using PyCall
-const path_utils_loc = "/home/govvijay/catkin_ws/src/mkz_mpc_path_follower/scripts/path_utils"
+const path_utils_loc = "/home/govvijay/catkin_ws/src/mkz_mpc_path_follower/scripts/sim_path_utils"
 unshift!(PyVector(pyimport("sys")["path"]), path_utils_loc) # append the current directory to Python path
-@pyimport nav_msgs_path_frenet as nmp
+@pyimport nav_msgs_path_xy as nmp
 
 # Access MPC Controller.
 push!(LOAD_PATH, "/home/govvijay/catkin_ws/src/mkz_mpc_path_follower/scripts/mpc_utils")
-import MKZMPCPathFollowerFrenet
-const kmpc = MKZMPCPathFollowerFrenet
+import MKZMPCPathFollower
+const kmpc = MKZMPCPathFollower
 
-K_coeffs = [0.0, 0.0, 0.0]
-des_init_heading = 0.0
-path_ref = Dict("x" => zeros(0), "y" => zeros(0), "psi" => zeros(0), "s" => zeros(0))
+const t_ref = collect(0:kmpc.dt:kmpc.N*kmpc.dt)
+x_ref = zeros(length(t_ref))
+y_ref = zeros(length(t_ref))
+psi_ref = zeros(length(t_ref))
 
 received_reference = false 		#TODO: can use time from last reading to see if data is fresh for MPC update.
 
@@ -53,10 +55,10 @@ end
 
 function convert_msg_to_path_dict(msg::Path)
     cumulative_dist = 0.0 # distance taken between by the vehicle to get to current waypoint
-    s_arr = zeros(1)      # estimated time the vehicle will reach waypoint i.
-    x_arr = zeros(1)      # planned x coordinate wrt vehicle local coordinate system (base_link)
-    y_arr = zeros(1)      # planned y coordinate wrt vehicle local coordinate system (base_link)
-    psi_arr = zeros(1)    # planned heading wrt vehicle local x-axis (base_link)
+    s_arr = zeros(0)      # estimated time the vehicle will reach waypoint i.
+    x_arr = zeros(0)      # planned x coordinate wrt vehicle local coordinate system (base_link)
+    y_arr = zeros(0)      # planned y coordinate wrt vehicle local coordinate system (base_link)
+    psi_arr = zeros(0)    # planned heading wrt vehicle local x-axis (base_link)
     
     # Extract poses and estimated time reached for the array of poses (msg.poses). 
     for i in range(1, length(msg.poses))
@@ -76,7 +78,7 @@ function convert_msg_to_path_dict(msg::Path)
         push!(psi_arr, 2.0*atan2(orientation_curr.z,orientation_curr.w) ) # quaternion to angle
     end
 
-	path = Dict()
+    path = Dict()
     path["x"] = x_arr
     path["y"] = y_arr
     path["s"] = s_arr
@@ -95,15 +97,22 @@ function path_callback(msg::Path)
 
   	if ref_lock == false
 		loginfo(@sprintf("Path received at: %.3f", time))
-		global K_coeffs, des_init_heading, path_ref
+		global x_ref, y_ref, psi_ref, curr_speed, des_speed
+
+		#= Ramp up speed slowly
+		if curr_speed < (des_speed - 1.0) 
+			sp = curr_speed + 1.0
+		else
+			sp = des_speed
+		end
+		=#
+		sp = des_speed
 
 		#Could do the msg_to_path conversion in Python using below method, but seems to be slow:
 		#https://github.com/jdlangs/RobotOS.jl/issues/33
-		path_ref = convert_msg_to_path_dict(msg)
+		path = convert_msg_to_path_dict(msg)
 			    
-
-	    K_coeffs, des_init_heading, =  nmp.get_reference_frenet(path_ref)
-
+	    x_ref, y_ref, psi_ref = nmp.get_reference_using_t(path, t_ref, sp)
 		global received_reference
     	received_reference = true
     end
@@ -111,7 +120,6 @@ end
 
 function pub_loop(pub_obj)
     loop_rate = Rate(10.0)
-
     while ! is_shutdown()
 	    if ! received_reference
 	        rossleep(loop_rate)
@@ -122,11 +130,11 @@ function pub_loop(pub_obj)
 	    ref_lock = true
 
 		global curr_speed, curr_wheel_angle, curr_acc_filt
-		global K_coeffs, des_init_heading, des_speed, path_ref
+		global x_ref, y_ref, psi_ref
 
 		# Update Model
-		kmpc.update_init_cond(0.0, 0.0, -des_init_heading, curr_speed) # s, ey, epsi, v
-		kmpc.update_reference(path_ref, K_coeffs, des_speed)
+		kmpc.update_init_cond(0.0, 0.0, 0.0, curr_speed)
+		kmpc.update_reference(x_ref, y_ref, psi_ref)
 
 	    ref_lock = false
 
@@ -147,7 +155,7 @@ function pub_loop(pub_obj)
 		#end
 
 		kmpc.update_current_input(df_opt, a_opt)
-		res = kmpc.get_solver_results()		
+		res = kmpc.get_solver_results()
 	    rossleep(loop_rate)
 	end
 end	
@@ -165,6 +173,7 @@ end
 if ! isinteractive()
 	try
 	    start_mpc_node()
-	catch exception
+	catch x
+		println(x)
 	end
 end

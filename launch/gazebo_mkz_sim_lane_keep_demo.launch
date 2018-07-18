@@ -13,8 +13,8 @@
   <include file="$(find dbw_mkz_vision_sim)/launch/lane_detection.launch" />
 
   <!-- Path Following Controller can be Selected here. -->
-  <node ns="vehicle" pkg="mkz_mpc_path_follower" type="mpc_cmd_pub.jl" name="mpc_node" output="log"/>
-  <!--node ns="vehicle" pkg="mkz_mpc_path_follower" type="mpc_cmd_pub_frenet.jl" name="mpc_node" output="log"/-->
+  <!--node ns="vehicle" pkg="mkz_mpc_path_follower" type="gazebo_sim_mpc_cmd_pub.jl" name="mpc_node" output="log"/-->
+  <node ns="vehicle" pkg="mkz_mpc_path_follower" type="gazebo_sim_mpc_cmd_pub_frenet.jl" name="mpc_node" output="log"/>
 
   <!-- My low level controller -->
   <arg name="ackermann_wheelbase" default="2.8498"/>

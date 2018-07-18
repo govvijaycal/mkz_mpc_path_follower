@@ -2,28 +2,51 @@
 
 # ROS Imports
 using RobotOS
-@rosimport geometry_msgs.msg: Twist
-@rosimport dbw_mkz_msgs.msg: SteeringReport
-@rosimport nav_msgs.msg: Path
-@rosimport mkz_mpc_path_follower.msg: MPC_cmd, acc_stamped
-@rosimport std_msgs.msg: Float64
+@rosimport mkz_mpc_path_follower.msg: state_est
+@rosimport mkz_mpc_path_follower.msg: mpc_path
+@rosimport mkz_mpc_path_follower.msg: MPC_cmd
+@rosimport std_msgs.msg: Empty
 rostypegen()
-using geometry_msgs.msg
-using dbw_mkz_msgs.msg
-using nav_msgs.msg
 using mkz_mpc_path_follower.msg
 using std_msgs.msg
+using PyCall
+
+track_with_time = false
+target_vel = 0.0
+
+if has_param("mat_waypoints")
+	mat_fname = get_param("mat_waypoints")
+else
+	error("No Matfile of waypoints provided!")
+end
+
+if has_param("track_using_time") && has_param("target_vel")
+	track_with_time = get_param("track_using_time")
+	target_vel = get_param("target_vel")	
+else
+	error("Invalid rosparam trajectory definition: track_using_time and target_vel")
+end
+
+scripts_dir = ""
+if has_param("scripts_dir")
+	scripts_dir = get_param("scripts_dir")
+else
+	error("Did not provide the scripts directory!")
+end
 
 # Access Python modules for path processing.  Ugly way of doing it, can seek to clean this up in the future.
 using PyCall
-const path_utils_loc = "/home/govvijay/catkin_ws/src/mkz_mpc_path_follower/scripts/path_utils"
-unshift!(PyVector(pyimport("sys")["path"]), path_utils_loc) # append the current directory to Python path
-@pyimport nav_msgs_path_xy as nmp
+const gps_utils_loc = scripts_dir * "gps_utils"
+unshift!(PyVector(pyimport("sys")["path"]), gps_utils_loc) # append the current directory to Python path
+@pyimport ref_gps_traj as rgt
+grt = rgt.GPSRefTrajectory(mat_filename=mat_fname)
 
 # Access MPC Controller.
-push!(LOAD_PATH, "/home/govvijay/catkin_ws/src/mkz_mpc_path_follower/scripts/mpc_utils")
+push!(LOAD_PATH, scripts_dir * "mpc_utils")
 import MKZMPCPathFollower
 const kmpc = MKZMPCPathFollower
+
+kmpc.update_cost(9.0, 9.0, 10.0, 0.0, 100.0, 1000.0, 0.0, 0.0) # x,y,psi,v,da,ddf,a,df
 
 const t_ref = collect(0:kmpc.dt:kmpc.N*kmpc.dt)
 x_ref = zeros(length(t_ref))
@@ -32,93 +55,35 @@ psi_ref = zeros(length(t_ref))
 
 received_reference = false 		#TODO: can use time from last reading to see if data is fresh for MPC update.
 
-des_speed = 15.0
-curr_speed = 0.0
-curr_acc_filt = 0.0
-curr_wheel_angle = 0.0
+if target_vel > 0.0
+	des_speed = target_vel
+else
+	des_speed = 0.00
+end
+
 ref_lock = false
+x_curr  = 0.0
+y_curr  = 0.0
+psi_curr  = 0.0
+v_curr  = 0.0
 
-function steer_callback(msg::SteeringReport)
+command_stop = false
+
+function state_est_callback(msg::state_est)
+
+	global x_curr, y_curr, psi_curr, v_curr
+	global received_reference
+
 	if ref_lock == false
-		global curr_speed, curr_wheel_angle
-	    curr_speed = Float64(msg.speed)
-		curr_wheel_angle = Float64(msg.steering_wheel_angle/14.8) # divide by steering ratio
+		x_curr = msg.x
+		y_curr = msg.y
+		psi_curr = msg.psi
+		v_curr = msg.v
+		received_reference = true
 	end
 end
 
-function acc_filt_callback(msg::acc_stamped)
-	if ref_lock == false
-		global curr_acc_filt
-		curr_acc_filt = Float64(msg.accel_value)
-	end
-end
-
-function convert_msg_to_path_dict(msg::Path)
-    cumulative_dist = 0.0 # distance taken between by the vehicle to get to current waypoint
-    s_arr = zeros(0)      # estimated time the vehicle will reach waypoint i.
-    x_arr = zeros(0)      # planned x coordinate wrt vehicle local coordinate system (base_link)
-    y_arr = zeros(0)      # planned y coordinate wrt vehicle local coordinate system (base_link)
-    psi_arr = zeros(0)    # planned heading wrt vehicle local x-axis (base_link)
-    
-    # Extract poses and estimated time reached for the array of poses (msg.poses). 
-    for i in range(1, length(msg.poses))
-    	position_curr = msg.poses[i].pose.position
-		orientation_curr = msg.poses[i].pose.orientation        
-        if i == 1
-            cumulative_dist = cumulative_dist + sqrt(position_curr.x^2 + position_curr.y^2)
-        else
-            position_prev = msg.poses[i-1].pose.position
-            cumulative_dist = cumulative_dist +
-                sqrt( (position_curr.x - position_prev.x)^2 + 
-                (position_curr.y - position_prev.y)^2 )
-        end        
-        push!(s_arr, cumulative_dist)
-        push!(x_arr, position_curr.x)
-        push!(y_arr, position_curr.y)
-        push!(psi_arr, 2.0*atan2(orientation_curr.z,orientation_curr.w) ) # quaternion to angle
-    end
-
-    path = Dict()
-    path["x"] = x_arr
-    path["y"] = y_arr
-    path["s"] = s_arr
-    path["psi"] = psi_arr
-    return path
-end
-
-
-function path_callback(msg::Path)
-    time = msg.header.stamp.secs + 1e-9 * msg.header.stamp.nsecs
-
-	if(length(msg.poses) == 0)
-		logwarn("Invalid Path")
-		return
-	end
-
-  	if ref_lock == false
-		loginfo(@sprintf("Path received at: %.3f", time))
-		global x_ref, y_ref, psi_ref, curr_speed, des_speed
-
-		#= Ramp up speed slowly
-		if curr_speed < (des_speed - 1.0) 
-			sp = curr_speed + 1.0
-		else
-			sp = des_speed
-		end
-		=#
-		sp = des_speed
-
-		#Could do the msg_to_path conversion in Python using below method, but seems to be slow:
-		#https://github.com/jdlangs/RobotOS.jl/issues/33
-		path = convert_msg_to_path_dict(msg)
-			    
-	    x_ref, y_ref, psi_ref = nmp.get_reference_using_t(path, t_ref, sp)
-		global received_reference
-    	received_reference = true
-    end
-end
-
-function pub_loop(pub_obj)
+function pub_loop(mpc_pub_obj, path_pub_obj, mpc_path_pub_obj)
     loop_rate = Rate(10.0)
     while ! is_shutdown()
 	    if ! received_reference
@@ -129,50 +94,89 @@ function pub_loop(pub_obj)
 	    global ref_lock
 	    ref_lock = true
 
-		global curr_speed, curr_wheel_angle, curr_acc_filt
-		global x_ref, y_ref, psi_ref
+		global x_curr, y_curr, psi_curr, v_curr, des_speed, command_stop
 
+		if ! track_with_time		
+			x_ref, y_ref, psi_ref, stop_cmd = grt[:get_waypoints](x_curr, y_curr, psi_curr, des_speed)
+
+			if stop_cmd == true
+				command_stop = true
+			end
+
+		else
+			x_ref, y_ref, psi_ref, stop_cmd = grt[:get_waypoints](x_curr, y_curr, psi_curr)
+
+			if stop_cmd == true
+				command_stop = true
+			end
+		end
+		
 		# Update Model
-		kmpc.update_init_cond(0.0, 0.0, 0.0, curr_speed)
-		kmpc.update_reference(x_ref, y_ref, psi_ref)
+		kmpc.update_init_cond(x_curr, y_curr, psi_curr, v_curr)
+		kmpc.update_reference(x_ref, y_ref, psi_ref, des_speed)
 
 	    ref_lock = false
+		
+		if command_stop == false
+			a_opt, df_opt, is_opt = kmpc.solve_model()
 
-	    a_opt, df_opt, is_opt = kmpc.solve_model()
+			rostm = get_rostime()
+			tm_secs = rostm.secs + 1e-9 * rostm.nsecs
 
-		rostm = get_rostime()
-		tm_secs = rostm.secs + 1e-9 * rostm.nsecs
+		    log_str = @sprintf("Solve Status: %s, Acc: %.3f, SA: %.3f", is_opt, a_opt, df_opt)
+		    loginfo(log_str)
 
-	    log_str = @sprintf("Solve Status: %s, Acc: %.3f, SA: %.3f", is_opt, a_opt, df_opt)
-	    loginfo(log_str)
+		    mpc_msg = MPC_cmd()
+		    mpc_msg.accel_cmd = a_opt
+		    mpc_msg.steer_angle_cmd = df_opt
+			publish( mpc_pub_obj,   mpc_msg )
 
-	    u_msg = MPC_cmd()
-	    u_msg.accel_cmd = a_opt
-	    u_msg.steer_angle_cmd = df_opt
-	     
-		#if is_opt == :Optimal
-	        publish(pub_obj, u_msg)
-		#end
+			path_msg = mpc_path()
+			path_msg.xs = x_ref
+			path_msg.ys = y_ref
+			path_msg.psis = psi_ref
+			publish(path_pub_obj, path_msg)
 
-		kmpc.update_current_input(df_opt, a_opt)
-		res = kmpc.get_solver_results()
+			kmpc.update_current_input(df_opt, a_opt)
+			res = kmpc.get_solver_results()
+
+			mpc_path_msg = mpc_path()
+			mpc_path_msg.xs = res[1] # x_mpc
+			mpc_path_msg.ys = res[2] # y_mpc
+			mpc_path_msg.psis = res[4] # psi_mpc	
+			publish(mpc_path_pub_obj, mpc_path_msg)
+		else
+			mpc_msg = MPC_cmd()
+			mpc_msg.accel_cmd = -1.0
+			mpc_msg.steer_angle_cmd = 0.0
+			publish( mpc_pub_obj,   mpc_msg )			
+		end
+	
 	    rossleep(loop_rate)
 	end
 end	
 
 function start_mpc_node()
     init_node("dbw_mpc_pf")
-    pub = Publisher("mpc_cmd",MPC_cmd, queue_size=2)
-    sub_steer = Subscriber("steering_report", SteeringReport, steer_callback, queue_size=2)    
-    sub_path = Subscriber("target_path", Path, path_callback, queue_size=2)
-	sub_acc  = Subscriber("filtered_accel", acc_stamped, acc_filt_callback, queue_size=2)    
+    mpc_pub = Publisher("mpc_cmd", MPC_cmd, queue_size=2)
 
-    pub_loop(pub)    
+    enable_pub   = Publisher("enable",  Empty, queue_size=2) # latch=True?
+    #disable_pub  = Publisher("disable", Empty, queue_size=2)
+
+    path_pub = Publisher("target_path",  mpc_path, queue_size=2)
+    mpc_path_pub = Publisher("mpc_path", mpc_path, queue_size=2)
+	sub_state  = Subscriber("state_est", state_est, state_est_callback, queue_size=2)    
+
+	publish(enable_pub, Empty())
+
+    pub_loop(mpc_pub, path_pub, mpc_path_pub)    
 end
 
 if ! isinteractive()
-	try
-	    start_mpc_node()
-	catch x
-	end
+	try 
+    	start_mpc_node()
+    catch x
+    	print(x)
+    end
 end
+

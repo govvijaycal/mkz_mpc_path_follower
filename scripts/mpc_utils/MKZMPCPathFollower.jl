@@ -48,15 +48,15 @@ module MKZMPCPathFollower
 	v_max = 20.0			
 	
     # Cost function gains.
-    C_x = 9.0				# longitudinal deviation
-    C_y = 9.0				# lateral deviation
-    C_psi = 10.0			# heading deviation
-    C_v   = 0.0			# target velocity deviation
+	@NLparameter(mdl, C_x    == 9.0) # longitudinal deviation
+	@NLparameter(mdl, C_y    == 9.0) # lateral deviation
+	@NLparameter(mdl, C_psi  == 10.0) # heading deviation
+	@NLparameter(mdl, C_v    == 0.0) # target velocity deviation
 
-	C_dacc	 = 0.1			# derivative of acceleration input
-	C_ddf	 = 3e4		# derivative of tire angle input
-	C_acc	 = 4.0			# acceleration input
-	C_df	 = 150			# tire angle input
+	@NLparameter(mdl, C_dacc == 100.0) # jerk
+	@NLparameter(mdl, C_ddf  == 1000.0) # slew rate
+	@NLparameter(mdl, C_acc  == 0.0)   # acceleration
+	@NLparameter(mdl, C_df   == 0.0)   # tire angle
 
 	#### (2) Define State/Input Variables and Constraints ####
 	# states: position (x,y), velocity (v), heading (psi)
@@ -139,10 +139,11 @@ module MKZMPCPathFollower
 
 	#####################################
 	##### Reference Update Function #####
-    function update_reference(x_ref::Array{Float64,1}, y_ref::Array{Float64,1}, psi_ref::Array{Float64,1})
+    function update_reference(x_ref::Array{Float64,1}, y_ref::Array{Float64,1}, psi_ref::Array{Float64,1}, v_des::Float64)
     	setvalue(x_r[i=1:(N+1)], x_ref) # Reference trajectory can be updated.
     	setvalue(y_r[i=1:(N+1)], y_ref) # Reference trajectory can be updated.
     	setvalue(psi_r[i=1:(N+1)], psi_ref) # Reference trajectory can be updated.
+    	setvalue(v_target, v_des)
     end
 
 	#########################################
@@ -150,6 +151,21 @@ module MKZMPCPathFollower
 	function update_current_input(c_swa::Float64, c_acc::Float64)
 		setvalue(d_f_current, c_swa)
 		setvalue(acc_current, c_acc)
+	end
+
+	#########################################
+	##### Cost Update Function #####
+	function update_cost(cx::Float64, cy::Float64, cp::Float64, cv::Float64,
+						 cda::Float64, cdd::Float64, ca::Float64, cd::Float64)
+		setvalue(C_x,   cx)
+		setvalue(C_y,   cy) 
+		setvalue(C_psi, cp)
+		setvalue(C_v,   cv)
+
+		setvalue(C_dacc, cda)
+		setvalue(C_ddf,  cdd)
+		setvalue(C_acc,  ca)
+		setvalue(C_df,   cd)
 	end
 
 	#################################
@@ -162,31 +178,6 @@ module MKZMPCPathFollower
         # get optimal solutions
         d_f_opt = getvalue(d_f[1:N])
         acc_opt = getvalue(acc[1:N])
-
-        #= 
-        # For debugging: print out solution.
-        x_act = getvalue(x[1:(N+1)])
-        y_act = getvalue(y[1:(N+1)])
-        psi_act = getvalue(psi[1:(N+1)])
-
-        t_ref = collect(0.0:dt:(N*dt))
-        println(@sprintf("Solve Status: %s", status))
-        for i in range(1, length(t_ref))
-            println(@sprintf("t: %.3f", t_ref[i]))
-            println(@sprintf("\tX: %.3f\tX_des: %.3f", x_act[i], x_ref[i]))
-            println(@sprintf("\tY: %.3f\tY_des: %.3f", y_act[i], y_ref[i]))
-            println(@sprintf("\tPsi: %.3f", psi_act[i]))
-
-            if i < length(t_ref)
-                println(@sprintf("\td_f: %.3f\n", d_f_opt[i]))
-                println(@sprintf("\tacc: %.3f\n", acc_opt[i]))
-            else
-                println("")
-            end
-
-        end
-        =#
-
 
         return acc_opt[1], d_f_opt[1], status
     end

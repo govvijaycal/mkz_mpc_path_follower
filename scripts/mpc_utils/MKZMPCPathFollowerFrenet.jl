@@ -48,14 +48,14 @@ module MKZMPCPathFollowerFrenet
 	v_max = 20.0			
 	
     # Cost function gains.
-    C_ey = 10.0				# lateral deviation
-    C_epsi = 5.0			# heading deviation
-    C_ev   = 0.5			# target velocity deviation
+	@NLparameter(mdl, C_ey    == 9.0) # longitudinal deviation
+	@NLparameter(mdl, C_epsi  == 10.0) # heading deviation
+	@NLparameter(mdl, C_ev    == 0.5) # target velocity deviation
 
-	C_dacc	 = 0.1			# derivative of acceleration input
-	C_ddf	 = 3e4		# derivative of tire angle input
-	C_acc	 = 4.0			# acceleration input
-	C_df	 = 150			# tire angle input
+	@NLparameter(mdl, C_dacc == 100.0) # jerk
+	@NLparameter(mdl, C_ddf  == 1000.0) # slew rate
+	@NLparameter(mdl, C_acc  == 0.0)   # acceleration
+	@NLparameter(mdl, C_df   == 0.0)   # tire angle
 
 	#### (2) Define State/Input Variables and Constraints ####
 	# states: position (x,y), velocity (v), heading (psi)
@@ -110,7 +110,7 @@ module MKZMPCPathFollowerFrenet
 	@NLparameter(mdl, epsi0 == 0.0);  @NLconstraint(mdl, epsi[1] == epsi0);
     @NLparameter(mdl, v0    == 0.0);  @NLconstraint(mdl, v[1]   == v0);
 
-	@NLexpression(mdl, K[i = 1:N],    k_poly[1]*s[i]^3 + k_poly[2]*s[i]^2 + k_poly[3]*s[i] + k_poly[4]) # TODO: CHECK ORDER MAKES SENSE.
+	@NLexpression(mdl, K[i = 1:N],    k_poly[1]*s[i]^3 + k_poly[2]*s[i]^2 + k_poly[3]*s[i] + k_poly[4])
 	@NLexpression(mdl, bta[i = 1:N],  atan( L_b / (L_a + L_b) * tan( d_f[i]) ) )
 	@NLexpression(mdl, dsdt[i = 1:N], v[i]*cos(epsi[i] + bta[i]) / (1-ey[i]*K[i]) )
 
@@ -153,6 +153,20 @@ module MKZMPCPathFollowerFrenet
 		setvalue(acc_current, c_acc)
 	end
 
+	#########################################
+	##### Cost Update Function #####
+	function update_cost(cey::Float64, cep::Float64, cev::Float64,
+						 cda::Float64, cdd::Float64, ca::Float64, cd::Float64)
+		setvalue(C_ey,   cey) 
+		setvalue(C_epsi, cep)
+		setvalue(C_ev,   cev)
+
+		setvalue(C_dacc, cda)
+		setvalue(C_ddf,  cdd)
+		setvalue(C_acc,  ca)
+		setvalue(C_df,   cd)
+	end
+
 	#################################
 	##### Model Solve Function #####
     function solve_model()
@@ -163,30 +177,6 @@ module MKZMPCPathFollowerFrenet
         # get optimal solutions
         d_f_opt = getvalue(d_f[1:N])
         acc_opt = getvalue(acc[1:N])
-
-        #= 
-        # For debugging: print out solution.
-        x_act = getvalue(x[1:(N+1)])
-        y_act = getvalue(y[1:(N+1)])
-        psi_act = getvalue(psi[1:(N+1)])
-
-        t_ref = collect(0.0:dt:(N*dt))
-        println(@sprintf("Solve Status: %s", status))
-        for i in range(1, length(t_ref))
-            println(@sprintf("t: %.3f", t_ref[i]))
-            println(@sprintf("\tX: %.3f\tX_des: %.3f", x_act[i], x_ref[i]))
-            println(@sprintf("\tY: %.3f\tY_des: %.3f", y_act[i], y_ref[i]))
-            println(@sprintf("\tPsi: %.3f", psi_act[i]))
-
-            if i < length(t_ref)
-                println(@sprintf("\td_f: %.3f\n", d_f_opt[i]))
-                println(@sprintf("\tacc: %.3f\n", acc_opt[i]))
-            else
-                println("")
-            end
-
-        end
-        =#
 
         return acc_opt[1], d_f_opt[1], status
     end

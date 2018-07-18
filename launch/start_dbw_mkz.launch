@@ -1,10 +1,7 @@
 <?xml version="1.0"?>
 
 <launch>
-  <!--node ns="vehicle" pkg="mkz_mpc_path_follower" type="mpc_cmd_pub.jl" name="mpc_node" output="log"/-->
-  <!--node ns="vehicle" pkg="mkz_mpc_path_follower" type="mpc_cmd_pub_frenet.jl" name="mpc_node" output="log"/-->
-
-<!-- BELOW FROM DBW.LAUNCH -->
+<!-- Copied and Modified version of dbw.launch from Dataspeed -->
   <arg name="live" default="true" />
   <arg name="load_urdf" default="true" />
   <!--arg name="twist_controller" default="true" /-->

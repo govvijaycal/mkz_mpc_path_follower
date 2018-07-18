@@ -39,6 +39,8 @@ add_message_files(
 	FILES
 	MPC_cmd.msg
     acc_stamped.msg
+	mpc_path.msg
+	state_est.msg
 )
 
 generate_messages(
