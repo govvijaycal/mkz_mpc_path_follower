@@ -1,4 +1,4 @@
 *.pyc
 data
 scripts/old
-scripts/analysis
+scripts/analysis/sim
