@@ -16,7 +16,7 @@ def plot(matfile, save_name):
 	if 't_en' in data.keys():
 		t_en = data['t_en']
 		t_data = data['t']
-		st_ind = np.argmin(t_data - t_en)
+		st_ind = np.argmin(np.square(t_data - t_en))
 	else:
 		st_ind = 0
 

@@ -160,6 +160,8 @@ function start_mpc_node()
     init_node("dbw_mpc_pf")
     mpc_pub = Publisher("mpc_cmd", MPC_cmd, queue_size=2)
 
+	# Note: this method doesn't publish properly.  May need to set latch to True.
+	# Can investigate this in the future, but use DBW buttons to start code for now.
     enable_pub   = Publisher("enable",  Empty, queue_size=2) # latch=True?
     #disable_pub  = Publisher("disable", Empty, queue_size=2)
 

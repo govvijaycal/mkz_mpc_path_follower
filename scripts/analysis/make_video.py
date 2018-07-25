@@ -76,7 +76,6 @@ class AnimateGPSTrajectory():
 		st_tm = np.max([self.mpc_path_msgs.get_start_time(), self.ref_path_msgs.get_start_time(), self.state_msgs.get_start_time()])
 		end_tm = np.min([self.mpc_path_msgs.get_end_time(), self.ref_path_msgs.get_end_time(), self.state_msgs.get_end_time()])
 		print st_tm, end_tm
-		# Todo: make this the latest of all messages to start and the earliest of all messages to end.
 		self.anim_loop(video_out_fname, st_tm, end_tm, 0.1, zoom)
 
 	def anim_loop(self, video_out_name, st_tm, end_tm, dt, zoom):

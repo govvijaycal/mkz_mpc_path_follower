@@ -50,7 +50,7 @@ def get_errors(pr_matfile, pf_matfile, bagfile, st_ind=None, end_ind=None):
 	if st_ind == None:
 		if 't_en' in mat_pf.keys():
 			diff_t = np.ravel(mat_pf['t'] - mat_pf['t_en'])
-			st_ind = np.argmin(diff_t)
+			st_ind = np.argmin(np.square(diff_t))
 		else:
 			st_ind = 0
 
