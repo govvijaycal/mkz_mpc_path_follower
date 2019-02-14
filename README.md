@@ -24,4 +24,4 @@ Please email Vijay Govindarajan (govvijay@berkeley.edu) with any comments or que
         * Pkg.update()
 
 # Usage
-roslaunch mkz_mpc_path_follower lane_keep_demo_vg.launch
+roslaunch mkz_mpc_path_follower gazebo_mkz_sim_lane_keep_demo.launch   
